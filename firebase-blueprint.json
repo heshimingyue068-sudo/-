@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and balance information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "balance": { "type": "number", "description": "Current balance in CNY" },
+        "role": { "enum": ["user", "admin"], "type": "string" },
+        "realName": { "type": "string" },
+        "idCard": { "type": "string" },
+        "alipayAccount": { "type": "string" },
+        "createdAt": { "format": "date-time", "type": "string" }
+      },
+      "required": ["uid", "email", "balance", "role"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Broad category of cards (e.g., Food, E-commerce)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "order": { "type": "number" }
+      }
+    },
+    "Brand": {
+      "title": "Brand",
+      "description": "Specific brand under a category (e.g., Starbucks)",
+      "type": "object",
+      "properties": {
+        "categoryId": { "type": "string" },
+        "name": { "type": "string" },
+        "logo": { "type": "string" },
+        "description": { "type": "string" },
+        "supportTypes": { "type": "array", "items": { "type": "string" }, "description": "e.g., ['card_password', 'qr_code']" }
+      }
+    },
+    "CouponConfig": {
+      "title": "Coupon Configuration",
+      "description": "Price and rate settings for a specific brand",
+      "type": "object",
+      "properties": {
+        "brandId": { "type": "string" },
+        "faceValue": { "type": "number" },
+        "fastRate": { "type": "number", "description": "Recycling rate for fast speed (0-1)" },
+        "slowRate": { "type": "number", "description": "Recycling rate for slow speed (0-1)" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "Order": {
+      "title": "Order",
+      "description": "User coupon recycling order",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "brandId": { "type": "string" },
+        "brandName": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "couponType": { "enum": ["card_password", "qr_code"], "type": "string" },
+        "speed": { "enum": ["fast", "slow"], "type": "string" },
+        "faceValue": { "type": "number" },
+        "expectedAmount": { "type": "number" },
+        "cardNo": { "type": "string" },
+        "cardPwd": { "type": "string" },
+        "expiryDate": { "type": "string", "description": "Expiry date of the card/coupon" },
+        "qrCodeUrl": { "type": "string" },
+        "status": { "enum": ["consignment", "settling", "completed", "closed", "dispute"], "type": "string" },
+        "rejectReason": { "type": "string" },
+        "createdAt": { "format": "date-time", "type": "string" },
+        "updatedAt": { "format": "date-time", "type": "string" }
+      }
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "User withdrawal request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "enum": ["alipay", "bank_card"], "type": "string" },
+        "targetAccount": { "type": "string" },
+        "status": { "enum": ["pending", "completed", "rejected"], "type": "string" },
+        "createdAt": { "format": "date-time", "type": "string" }
+      }
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A single balance change event",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "amount": { "type": "number", "description": "Positive for income, negative for expenditure" },
+        "type": { "enum": ["income", "expenditure"], "type": "string" },
+        "description": { "type": "string", "description": "Display text like 'Order Settlement' or 'Withdrawal'" },
+        "sourceId": { "type": "string", "description": "ID of the related order or withdrawal" },
+        "status": { "enum": ["completed", "pending", "failed"], "type": "string" },
+        "createdAt": { "format": "date-time", "type": "string" }
+      },
+      "required": ["userId", "amount", "type", "description", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "description": "User profiles",
+      "schema": "User"
+    },
+    "categories/{categoryId}": {
+      "description": "Card categories",
+      "schema": "Category"
+    },
+    "brands/{brandId}": {
+      "description": "Card brands",
+      "schema": "Brand"
+    },
+    "configs/{configId}": {
+      "description": "Coupon price configurations",
+      "schema": "CouponConfig"
+    },
+    "orders/{orderId}": {
+      "description": "Recycling orders",
+      "schema": "Order"
+    },
+    "withdrawals/{withdrawalId}": {
+      "description": "Withdrawal requests",
+      "schema": "Withdrawal"
+    },
+    "transactions/{transactionId}": {
+      "description": "User balance transactions (income/expenditure)",
+      "schema": "Transaction"
+    }
+  }
+}
