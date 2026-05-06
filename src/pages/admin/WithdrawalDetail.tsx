@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../../lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { 
   Landmark, 
   ChevronLeft, 
@@ -12,7 +12,7 @@ import {
   User, 
   CreditCard, 
   ShoppingBag,
-  ExternalLink,
+  ExternalLink, 
   Copy,
   Receipt
 } from 'lucide-react';
@@ -47,6 +47,7 @@ export default function AdminWithdrawalDetail() {
   const [withdrawal, setWithdrawal] = useState<Withdrawal | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -87,6 +88,58 @@ export default function AdminWithdrawalDetail() {
     }
   };
 
+  const updateStatus = async (newStatus: Withdrawal['status'], reason?: string) => {
+    if (!withdrawal) return;
+    
+    let confirmMsg = '';
+    if (newStatus === 'completed') confirmMsg = '确定标记为已汇款吗？';
+    if (newStatus === 'processing') confirmMsg = '确定开始打款处理吗？';
+    if (newStatus === 'rejected') confirmMsg = '确定要驳回该申请吗？';
+
+    if (newStatus !== 'rejected' && !confirm(confirmMsg)) return;
+
+    setUpdating(true);
+    try {
+      const batch = writeBatch(db);
+      const wRef = doc(db, 'withdrawals', withdrawal.id);
+      
+      const updateData: any = { status: newStatus };
+      if (reason) updateData.rejectionReason = reason;
+      
+      batch.update(wRef, updateData);
+
+      if (newStatus === 'rejected') {
+        withdrawal.orderIds.forEach(orderId => {
+          batch.update(doc(db, 'orders', orderId), { 
+            withdrawn: false,
+            withdrawId: null 
+          });
+        });
+        
+        batch.set(doc(collection(db, 'transactions')), {
+          userId: withdrawal.userId,
+          amount: withdrawal.amount,
+          type: 'income',
+          description: `提现驳回退款: ${reason || '不符合提现规则'}`,
+          sourceId: withdrawal.id,
+          status: 'completed',
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      await batch.commit();
+      setWithdrawal(prev => prev ? { ...prev, status: newStatus, rejectionReason: reason || prev.rejectionReason } : null);
+      if (newStatus === 'completed' || newStatus === 'rejected') {
+        setTimeout(() => navigate('/admin/withdrawals'), 1500);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('更新失败');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     // Simple feedback could be added here
@@ -124,6 +177,34 @@ export default function AdminWithdrawalDetail() {
             </p>
           </div>
         </div>
+
+        {(withdrawal.status === 'pending' || withdrawal.status === 'processing') && (
+          <div className="flex gap-4">
+            {withdrawal.status === 'pending' && (
+              <button 
+                onClick={() => updateStatus('processing')}
+                className="h-14 px-8 rounded-2xl bg-indigo-50 text-[10px] font-black uppercase tracking-widest text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all active:scale-95 shadow-lg shadow-indigo-100/50"
+              >
+                开始处理 (PROCESS)
+              </button>
+            )}
+            <button 
+              onClick={() => updateStatus('completed')}
+              className="h-14 px-8 rounded-2xl bg-emerald-600 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-700 transition-all active:scale-95 shadow-lg shadow-emerald-200/50"
+            >
+              完成打款 (APPROVE)
+            </button>
+            <button 
+              onClick={() => {
+                const reason = prompt('请输入驳回原因:');
+                if (reason) updateStatus('rejected', reason);
+              }}
+              className="h-14 px-8 rounded-2xl bg-rose-50 text-[10px] font-black uppercase tracking-widest text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white transition-all active:scale-95 shadow-lg shadow-rose-100/50"
+            >
+              驳回申请 (REJECT)
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="space-y-8">

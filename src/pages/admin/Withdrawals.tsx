@@ -82,6 +82,9 @@ export default function AdminWithdrawals() {
       const updateData: any = { status: newStatus };
       if (reason) updateData.rejectionReason = reason;
 
+      // Clean undefined values if any (though here it's unlikely, it's good practice)
+      Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
+
       // Update withdrawal status
       batch.update(doc(db, 'withdrawals', withdrawal.id), updateData);
 
@@ -214,6 +217,15 @@ export default function AdminWithdrawals() {
 
                     {(w.status === 'pending' || w.status === 'processing') && (
                       <>
+                        {w.status === 'pending' && (
+                          <button
+                            onClick={() => handleStatusUpdate(w, 'processing')}
+                            className="h-10 w-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-all shadow-sm active:scale-90"
+                            title="标记打款中"
+                          >
+                            <span className="text-[10px] font-black italic">P</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handleStatusUpdate(w, 'completed')}
                           className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center hover:bg-emerald-600 hover:text-white transition-all shadow-sm active:scale-90"

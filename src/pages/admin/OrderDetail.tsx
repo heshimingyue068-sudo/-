@@ -136,35 +136,71 @@ export default function AdminOrderDetail() {
   const updateCardStatus = async (cardIndex: number, newStatus: CardItem['status'], remark?: string) => {
     if (!order || !order.cards) return;
     
-    const newCards = [...order.cards];
-    newCards[cardIndex] = { 
-      ...newCards[cardIndex], 
-      status: newStatus,
-      remark: remark ?? newCards[cardIndex].remark ?? ""
-    };
+    // Check if balance update is needed
+    const cardToUpdate = order.cards[cardIndex];
+    if (!cardToUpdate) return;
+    
+    // Requirement: completed, closed, dispute need remark to be filled
+    const finalRemark = (remark !== undefined ? remark : cardToUpdate.remark) || "";
+    if (['completed', 'closed', 'dispute'].includes(newStatus) && !finalRemark.trim()) {
+      alert(`操作受阻：设置为“${newStatus === 'completed' ? '已完成' : newStatus === 'closed' ? '已关闭' : '纠纷中'}”状态时必须填写核销备注/说明原因`);
+      return;
+    }
 
-    // Sanitize cards to remove any undefined values before Firestore update
-    const sanitizedCards = newCards.map(card => {
-      const sanitized: any = { ...card };
-      Object.keys(sanitized).forEach(key => {
-        if (sanitized[key] === undefined) {
-          delete sanitized[key];
-        }
-      });
-      return sanitized;
-    });
+    const isBecomingCompleted = newStatus === 'completed' && cardToUpdate.status !== 'completed';
+    const cardValue = order.expectedAmount / (order.cards.length || 1);
 
     setUpdating(true);
     try {
-      const orderRef = doc(db, 'orders', order.id);
-      await updateDoc(orderRef, {
-        cards: sanitizedCards,
-        updatedAt: serverTimestamp()
+      await runTransaction(db, async (transaction) => {
+        const orderRef = doc(db, 'orders', order.id);
+        const userRef = doc(db, 'users', order.userId);
+        
+        const userSnap = await transaction.get(userRef);
+        if (!userSnap.exists()) throw new Error("用户不存在");
+
+        const updatedCards = order.cards!.map((card, idx) => {
+          if (idx === cardIndex) {
+            return {
+              ...card,
+              status: newStatus,
+              remark: remark ?? card.remark ?? ""
+            };
+          }
+          return card;
+        });
+
+        // Sanitize
+        const sanitizedCards = updatedCards.map(card => {
+          const s: any = { ...card };
+          Object.keys(s).forEach(k => { if (s[k] === undefined) delete s[k]; });
+          return s;
+        });
+
+        transaction.update(orderRef, {
+          cards: sanitizedCards,
+          updatedAt: serverTimestamp()
+        });
+
+        if (isBecomingCompleted) {
+          const currentBalance = userSnap.data().balance || 0;
+          transaction.update(userRef, {
+            balance: currentBalance + cardValue
+          });
+        }
       });
-      setOrder({ ...order, cards: sanitizedCards });
+
+      // Update local state
+      const updatedCards = order.cards.map((card, idx) => {
+        if (idx === cardIndex) {
+          return { ...card, status: newStatus, remark: remark ?? card.remark ?? "" };
+        }
+        return card;
+      });
+      setOrder({ ...order, cards: updatedCards });
     } catch (err) {
       console.error(err);
-      alert('操作失败');
+      alert('操作失败: ' + (err instanceof Error ? err.message : '未知错误'));
     } finally {
       setUpdating(false);
     }
@@ -251,18 +287,12 @@ export default function AdminOrderDetail() {
         <section className="bg-white rounded-[2.5rem] p-10 shadow-xl shadow-slate-200/50 border border-slate-50 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-2 h-full bg-indigo-600" />
           <div className="flex items-center gap-3 mb-10">
-            <h3 className="text-xl font-black text-slate-800 tracking-tight">01 订单基础信息</h3>
+            <h3 className="text-xl font-black text-slate-800 tracking-tight">01 订单基础概况 (汇总)</h3>
             <div className="h-px flex-1 bg-slate-100" />
-            <span className={cn(
-              "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm",
-              order.status === 'consignment' ? "bg-amber-100 text-amber-700" :
-              order.status === 'settling' ? "bg-blue-100 text-blue-700" :
-              order.status === 'completed' ? "bg-emerald-100 text-emerald-700" :
-              order.status === 'dispute' ? "bg-indigo-100 text-indigo-700" :
-              "bg-slate-100 text-slate-700"
-            )}>
-              {order.status === 'consignment' ? '寄售中' : order.status === 'settling' ? '结算中' : order.status === 'completed' ? '已完成' : order.status === 'dispute' ? '有争议' : '已关闭'}
-            </span>
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
+               <span className="text-[10px] font-black uppercase text-slate-300">主订单状态</span>
+               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{order.status === 'consignment' ? '核销中' : order.status === 'completed' ? '已收录' : order.status}</span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
@@ -277,17 +307,17 @@ export default function AdminOrderDetail() {
             </div>
 
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">订单面值</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">总面值</p>
               <p className="text-3xl font-black text-slate-800 tracking-tighter">¥{order.faceValue}</p>
             </div>
 
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">回款金额</p>
-              <p className="text-3xl font-black text-emerald-600 tracking-tighter">¥{order.expectedAmount.toFixed(2)}</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">总计预估回款</p>
+              <p className="text-3xl font-black text-indigo-600 tracking-tighter">¥{order.expectedAmount.toFixed(2)}</p>
             </div>
 
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">结算模式</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">回款速度</p>
               <p className={cn(
                 "inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
                 order.speed === 'fast' ? "bg-amber-100 text-amber-600" : "bg-blue-100 text-blue-600"
@@ -302,7 +332,7 @@ export default function AdminOrderDetail() {
         <section className="bg-white rounded-[2.5rem] p-10 shadow-xl shadow-slate-200/50 border border-slate-50 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-2 h-full bg-slate-200" />
           <div className="flex items-center gap-3 mb-10">
-            <h3 className="text-xl font-black text-slate-800 tracking-tight">02 用户与账户信息</h3>
+            <h3 className="text-xl font-black text-slate-800 tracking-tight">02 提交者账户信息</h3>
             <div className="h-px flex-1 bg-slate-100" />
             <User size={18} className="text-slate-300" />
           </div>
@@ -310,11 +340,11 @@ export default function AdminOrderDetail() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 text-left">持卡人姓名</p>
-              <p className="text-sm font-black text-slate-700 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100">{userProfile?.realName || '未实名'}</p>
+              <p className="text-sm font-black text-slate-700 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100">{userProfile?.realName || '尚未实名'}</p>
             </div>
 
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 text-left">结算账号 (Alipay)</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 text-left">结算支付宝 (Alipay)</p>
               <div className="flex items-center justify-between bg-indigo-50/50 p-3 rounded-2xl border border-indigo-100 group">
                 <p className="text-sm font-black text-indigo-700 font-mono">{userProfile?.alipayAccount || '-'}</p>
                 {userProfile?.alipayAccount && (
@@ -326,7 +356,7 @@ export default function AdminOrderDetail() {
             </div>
 
             <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 text-left">提交时间</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 text-left">总计提交时间</p>
               <p className="text-sm font-bold text-slate-600">{new Date(order.createdAt).toLocaleString()}</p>
             </div>
           </div>
@@ -334,23 +364,22 @@ export default function AdminOrderDetail() {
 
         {/* GROUP 3: 核销明细管理 */}
         <section className="bg-white rounded-[2.5rem] p-10 shadow-xl shadow-slate-200/50 border border-slate-50 relative">
-          <div className="absolute top-0 left-0 w-2 h-full bg-indigo-600" />
+          <div className="absolute top-0 left-0 w-2 h-full bg-emerald-500" />
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-10">
             <div className="flex items-center gap-3">
-              <h3 className="text-xl font-black text-slate-800 tracking-tight">03 卡券核销明细</h3>
+              <h3 className="text-xl font-black text-slate-800 tracking-tight">03 子订单核销矩阵</h3>
               <div className="h-4 w-px bg-slate-100 mx-2 hidden sm:block" />
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">共 {order.cards?.length || 1} 项数据</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">子订单细分: {order.cards?.length || 1} 份</span>
             </div>
             
-            {(order.closedReason || order.disputeDetails) && (
-              <div className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border",
-                order.status === 'closed' ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-indigo-50 text-indigo-600 border-indigo-100"
-              )}>
-                {order.status === 'closed' ? <XCircle size={14} /> : <AlertCircle size={14} />}
-                {order.status === 'closed' ? '已强行关闭' : '订单存在争议'}
-              </div>
-            )}
+            <div className="flex gap-2">
+               <button 
+                  onClick={() => updateOrderStatus('completed')}
+                  className="px-4 py-2 bg-emerald-600 text-[10px] font-black uppercase text-white rounded-xl shadow-lg shadow-emerald-100 active:scale-95 transition-all"
+               >
+                  标记整单完成
+               </button>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -360,102 +389,114 @@ export default function AdminOrderDetail() {
                   <table className="w-full text-left">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">序号</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">卡号 (Card Number)</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">卡密 (Password)</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">核销记录备注</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">核销记录状态</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">#</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">卡号/卡密</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">核销备注</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">预计结算</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">状态</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">精细控制</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {order.cards.map((card, idx) => (
-                        <tr key={idx} className="hover:bg-white transition-colors group group-hover:shadow-sm">
-                          <td className="px-6 py-6">
-                            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-xs font-black text-slate-400 italic">
-                              {(idx + 1).toString().padStart(2, '0')}
-                            </span>
-                          </td>
-                          <td className="px-6 py-6">
-                            <div className="flex items-center gap-2 max-w-[200px]">
-                              <span className="text-sm font-bold text-slate-700 font-mono tracking-tight break-all">{card.cardNo || '-'}</span>
-                              {card.cardNo && (
-                                <button onClick={() => copyToClipboard(card.cardNo!)} className="text-slate-300 hover:text-indigo-600 shrink-0">
-                                  <Copy size={12}/>
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-6 py-6">
-                            <div className="flex items-center gap-2 max-w-[200px]">
-                              <span className="text-sm font-black text-indigo-600 font-mono tracking-wider break-all">{card.cardPwd || '-'}</span>
-                              {card.cardPwd && (
-                                <button onClick={() => copyToClipboard(card.cardPwd!)} className="text-indigo-300 hover:text-indigo-600 shrink-0">
-                                  <Copy size={12}/>
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-6 py-6">
-                            {(order.status === 'settling' || order.status === 'dispute') ? (
+                      {order.cards.map((card, idx) => {
+                        const statusColors: any = {
+                          completed: "bg-emerald-50 text-emerald-600",
+                          settling: "bg-blue-50 text-blue-600",
+                          expired: "bg-slate-100 text-slate-500",
+                          used: "bg-amber-50 text-amber-600",
+                          invalid: "bg-rose-50 text-rose-600",
+                          consignment: "bg-amber-100 text-amber-700",
+                          closed: "bg-slate-200 text-slate-700",
+                          dispute: "bg-indigo-50 text-indigo-700"
+                        };
+                        const statusLabels: any = {
+                          completed: "已完成",
+                          settling: "结算中",
+                          expired: "已过期",
+                          used: "已使用",
+                          invalid: "已失效",
+                          consignment: "寄售中",
+                          closed: "已关闭",
+                          dispute: "纠纷中"
+                        };
+                        
+                        return (
+                          <tr key={idx} className="hover:bg-white transition-colors group">
+                            <td className="px-6 py-4">
+                              <span className="text-[10px] font-black text-slate-300 italic">{(idx + 1).toString().padStart(2, '0')}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="space-y-1">
+                                {card.cardNo && (
+                                  <div className="flex items-center gap-1.5 group/copy">
+                                    <span className="text-[8px] font-bold text-slate-300 uppercase">NO.</span>
+                                    <span className="text-[10px] font-bold text-slate-600 font-mono tracking-tight">{card.cardNo}</span>
+                                    <button onClick={() => copyToClipboard(card.cardNo!)} className="opacity-0 group-hover/copy:opacity-100 text-indigo-300">
+                                      <Copy size={10} />
+                                    </button>
+                                  </div>
+                                )}
+                                {card.cardPwd && (
+                                  <div className="flex items-center gap-1.5 group/copy">
+                                    <span className="text-[8px] font-bold text-indigo-300 uppercase">PW.</span>
+                                    <span className="text-[11px] font-black text-indigo-600 font-mono tracking-widest">{card.cardPwd}</span>
+                                    <button onClick={() => copyToClipboard(card.cardPwd!)} className="opacity-0 group-hover/copy:opacity-100 text-indigo-400">
+                                      <Copy size={10} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
                               <input 
                                 type="text"
-                                placeholder="输入备注/拒绝原因..."
-                                className="w-full bg-indigo-50/50 px-4 py-2 rounded-xl text-xs font-bold text-slate-700 placeholder:text-slate-300 outline-none border border-transparent focus:border-indigo-100 focus:bg-white transition-all"
+                                placeholder="添加核销备注..."
+                                className="w-full bg-slate-100/50 px-3 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 placeholder:text-slate-300 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all border border-transparent"
                                 value={card.remark || ''}
                                 onChange={(e) => updateCardStatus(idx, card.status, e.target.value)}
                               />
-                            ) : (
-                              <span className="text-xs font-bold text-slate-400 break-all">{card.remark || '无记录信息'}</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-6">
-                            <div className="flex flex-col gap-3">
-                              <div className={cn(
-                                "inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter w-fit",
-                                card.status === 'completed' ? "bg-emerald-50 text-emerald-600" :
-                                card.status === 'settling' ? "bg-blue-50 text-blue-600" :
-                                card.status === 'expired' ? "bg-slate-100 text-slate-500" :
-                                card.status === 'used' ? "bg-amber-50 text-amber-600" :
-                                card.status === 'invalid' ? "bg-rose-50 text-rose-600" :
-                                "bg-slate-50 text-slate-400"
+                            </td>
+                            <td className="px-6 py-4">
+                               <div className="flex flex-col">
+                                  <span className="text-xs font-black text-emerald-600 tracking-tighter">¥{(order.expectedAmount / (order.cards?.length || 1)).toFixed(2)}</span>
+                                  <span className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">EST. SETTLEMENT</span>
+                               </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest",
+                                statusColors[card.status] || "bg-slate-50 text-slate-400"
                               )}>
-                                {card.status === 'completed' ? '已完成' : 
-                                 card.status === 'settling' ? '结算中' : 
-                                 card.status === 'expired' ? '已过期' : 
-                                 card.status === 'used' ? '已使用' :
-                                 card.status === 'invalid' ? '已失效' :
-                                 card.status === 'consignment' ? '寄售中' :
-                                 card.status === 'dispute' ? '有争议' : '已关闭'}
+                                {statusLabels[card.status] || card.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex justify-end gap-1 flex-wrap max-w-[200px]">
+                                {[
+                                  { id: 'consignment', label: '寄售', bg: 'hover:bg-amber-600' },
+                                  { id: 'settling', label: '结算', bg: 'hover:bg-blue-600' },
+                                  { id: 'completed', label: '完成', bg: 'hover:bg-emerald-600' },
+                                  { id: 'closed', label: '关闭', bg: 'hover:bg-slate-600' },
+                                  { id: 'dispute', label: '纠纷', bg: 'hover:bg-indigo-600' },
+                                  { id: 'invalid', label: '失效', bg: 'hover:bg-rose-600' }
+                                ].map((btn) => (
+                                  <button
+                                    key={btn.id}
+                                    onClick={() => updateCardStatus(idx, btn.id as any)}
+                                    className={cn(
+                                      "px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all active:scale-90 border border-slate-100 text-slate-400 hover:text-white",
+                                      btn.bg,
+                                      card.status === btn.id && "bg-slate-800 text-white border-transparent"
+                                    )}
+                                  >
+                                    {btn.label}
+                                  </button>
+                                ))}
                               </div>
-                              
-                              {(order.status === 'settling' || order.status === 'dispute') && (
-                                <div className="flex flex-wrap gap-1">
-                                  {[
-                                    { id: 'completed', label: '完成' },
-                                    { id: 'settling', label: '结算' },
-                                    { id: 'expired', label: '过期' },
-                                    { id: 'used', label: '已用' },
-                                    { id: 'invalid', label: '失效' }
-                                  ].map((s) => (
-                                    <button
-                                      key={s.id}
-                                      onClick={() => updateCardStatus(idx, s.id as any)}
-                                      className={cn(
-                                        "px-2 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-tighter transition-all active:scale-90 border",
-                                        card.status === s.id 
-                                          ? "bg-slate-800 text-white border-transparent shadow-sm"
-                                          : "bg-white text-slate-400 border-slate-100 hover:border-slate-300"
-                                      )}
-                                    >
-                                      {s.label}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -466,7 +507,7 @@ export default function AdminOrderDetail() {
               )
             ) : (
               <div className="flex flex-col items-center justify-center p-12 bg-slate-50/50 rounded-3xl border border-dashed border-slate-200">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-8 border-b pb-2">卡券核销二维码凭证</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-8 border-b pb-2">卡券核销凭证预览</p>
                 {order.qrCodeUrl ? (
                   <div className="relative group">
                     <img src={order.qrCodeUrl} alt="QR Code" className="max-w-sm rounded-[2.5rem] shadow-2xl border-8 border-white ring-1 ring-slate-100" />
@@ -478,12 +519,12 @@ export default function AdminOrderDetail() {
                         className="flex items-center justify-center gap-2 h-12 rounded-2xl bg-indigo-600 text-[10px] font-black uppercase tracking-widest text-white shadow-xl shadow-indigo-200"
                       >
                         <ExternalLink size={14} />
-                        查看凭证原图
+                        查看凭证全图
                       </a>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm font-bold text-slate-300 italic">管理员未上传此订单的图片凭证</p>
+                  <p className="text-sm font-bold text-slate-300 italic">管理员尚未上传凭证图片</p>
                 )}
               </div>
             )}

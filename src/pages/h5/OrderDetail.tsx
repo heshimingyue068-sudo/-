@@ -20,7 +20,7 @@ interface CardItem {
   id: string;
   cardNo?: string;
   cardPwd?: string;
-  status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute';
+  status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute' | 'expired' | 'used' | 'invalid';
 }
 
 interface Order {
@@ -90,7 +90,7 @@ export default function OrderDetail() {
     return `${h > 0 ? h + ':' : ''}${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`;
   };
 
-  const getStatusConfig = (status: Order['status']) => {
+  const getStatusConfig = (status: Order['status'] | CardItem['status']) => {
     switch (status) {
       case 'consignment':
         return { label: '寄售中', color: 'text-orange-500', bg: 'bg-orange-50', icon: Clock, desc: '系统正在核验卡券信息，请耐心等待。' };
@@ -102,6 +102,14 @@ export default function OrderDetail() {
         return { label: '已关闭', color: 'text-slate-500', bg: 'bg-slate-100', icon: XCircle, desc: '订单由于审核不通过或其他原因已关闭。' };
       case 'dispute':
         return { label: '纠纷中', color: 'text-rose-500', bg: 'bg-rose-50', icon: HelpCircle, desc: '订单存在疑义，平台正在介入处理。' };
+      case 'expired':
+        return { label: '已过期', color: 'text-slate-400', bg: 'bg-slate-100', icon: Clock, desc: '卡券已过期，无法继续交易。' };
+      case 'used':
+        return { label: '已使用', color: 'text-amber-500', bg: 'bg-amber-100', icon: XCircle, desc: '该卡券已被使用，核销失败。' };
+      case 'invalid':
+        return { label: '已失效', color: 'text-rose-400', bg: 'bg-rose-100', icon: AlertCircle, desc: '卡号或密码有误，卡片失效。' };
+      default:
+        return { label: '待处理', color: 'text-slate-400', bg: 'bg-slate-50', icon: Clock, desc: '订单正在排队核销中。' };
     }
   };
 
@@ -148,54 +156,7 @@ export default function OrderDetail() {
         animate={{ opacity: 1, y: 0 }}
         className="p-6 space-y-6"
       >
-        {/* Status Card */}
-        <section className={cn("rounded-[2.5rem] p-8 shadow-xl shadow-slate-200 border border-white", statusConfig.bg)}>
-          <div className="flex items-center gap-4 mb-4">
-             <div className={cn("flex h-14 w-14 items-center justify-center rounded-2xl shadow-inner bg-white/50", statusConfig.color)}>
-                <statusConfig.icon size={32} />
-             </div>
-             <div>
-                <h2 className={cn("text-2xl font-black tracking-tight", statusConfig.color)}>{statusConfig.label}</h2>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">OrderID: {order.id.slice(-12).toUpperCase()}</p>
-             </div>
-          </div>
-          <p className="text-xs font-bold text-slate-600 leading-relaxed">
-            {statusConfig.desc}
-          </p>
-
-          {/* Special Status Info */}
-          {order.status === 'settling' && timeLeft > 0 && (
-            <div className="mt-6 flex items-center justify-between rounded-xl bg-white/60 p-4 backdrop-blur-sm border border-white">
-               <div className="flex flex-col">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">预计到账倒计时</span>
-                  <span className="text-xl font-black text-indigo-600 font-mono tracking-tighter">{formatTime(timeLeft)}</span>
-               </div>
-               <div className="h-10 w-10 flex items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
-                  <Clock size={20} className="animate-pulse" />
-               </div>
-            </div>
-          )}
-
-          {order.status === 'closed' && order.closedReason && (
-            <div className="mt-6 rounded-2xl bg-slate-200/50 p-4 border border-white">
-               <div className="flex items-center gap-2 mb-2 text-slate-700">
-                  <XCircle size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-widest">关闭原因</span>
-               </div>
-               <p className="text-xs font-bold text-slate-500 leading-relaxed">{order.closedReason}</p>
-            </div>
-          )}
-
-          {order.status === 'dispute' && order.disputeDetails && (
-            <div className="mt-6 rounded-2xl bg-rose-100/50 p-4 border border-white">
-               <div className="flex items-center gap-2 mb-2 text-rose-700">
-                  <AlertCircle size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-widest">纠纷说明</span>
-               </div>
-               <p className="text-xs font-bold text-rose-600/80 leading-relaxed">{order.disputeDetails}</p>
-            </div>
-          )}
-        </section>
+        {/* Main Status card removed as per user request */}
 
         {/* Transaction Summary */}
         <section className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200 border border-slate-50">
@@ -234,8 +195,11 @@ export default function OrderDetail() {
         {/* Card Info */}
         <section className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200 border border-slate-50">
            <div className="mb-6 flex items-center justify-between">
-              <h3 className="text-sm font-black text-slate-800">卡券明细</h3>
-              <div className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[8px] font-black uppercase text-emerald-600">
+              <div className="flex flex-col">
+                <h3 className="text-sm font-black text-slate-800">寄售明细 (子订单)</h3>
+                <p className="text-[10px] font-bold text-slate-400">共计 {order.cards?.length || 0} 张卡券，每张卡券独立核销</p>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-[8px] font-black uppercase text-indigo-600">
                 <ShieldCheck size={12} />
                 <span>安全核销中</span>
               </div>
@@ -246,13 +210,15 @@ export default function OrderDetail() {
                 order.cards.map((card, index) => {
                   const cardStatus = getStatusConfig(card.status);
                   return (
-                    <div key={card.id || index} className="relative rounded-3xl border border-slate-50 bg-slate-50/50 p-5 transition-all hover:border-indigo-100 hover:bg-white lg:p-6">
+                    <div key={card.id || index} className="relative rounded-3xl border border-slate-50 bg-slate-50/50 p-5 transition-all hover:border-indigo-100 hover:bg-white lg:p-6 group">
                        <div className="mb-4 flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                             <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-black text-white italic shadow-lg shadow-indigo-100">
+                             <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-black text-white italic shadow-lg shadow-indigo-200">
                                 {index + 1}
                              </div>
-                             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">核销序号</span>
+                             <div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">子订单 #{card.id || (index+1).toString().padStart(4, '0')}</span>
+                             </div>
                           </div>
                           <div className={cn(
                             "flex items-center gap-1.5 rounded-full px-3 py-1 text-[8px] font-black uppercase tracking-widest shadow-sm",
@@ -265,6 +231,17 @@ export default function OrderDetail() {
                        </div>
 
                        <div className="grid gap-3">
+                          {card.cardNo && (
+                            <div className="flex items-center justify-between rounded-xl bg-white p-3 border border-slate-50">
+                               <div className="flex flex-col">
+                                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-300">卡号</span>
+                                  <span className="text-sm font-bold text-slate-700 font-mono tracking-wider break-all">{card.cardNo}</span>
+                               </div>
+                               <button onClick={() => copyToClipboard(card.cardNo!)} className="text-indigo-300 hover:text-indigo-600">
+                                  <Copy size={16} />
+                                </button>
+                            </div>
+                          )}
                           {card.cardPwd && (
                             <div className="flex items-center justify-between rounded-xl bg-white p-3 border border-slate-50">
                                <div className="flex flex-col">
@@ -276,6 +253,17 @@ export default function OrderDetail() {
                                </button>
                             </div>
                           )}
+                       </div>
+
+                       {/* Status Remarks */}
+                       <div className="mt-4 rounded-2xl bg-white/50 p-4 border border-slate-100/50">
+                          <div className="flex items-center gap-2 mb-1.5 text-slate-400">
+                             <HelpCircle size={12} />
+                             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">状态备注</span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-600 leading-relaxed italic">
+                             {cardStatus.desc}
+                          </p>
                        </div>
                     </div>
                   );

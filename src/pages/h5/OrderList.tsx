@@ -10,7 +10,7 @@ interface CardItem {
   id: string;
   cardNo?: string;
   cardPwd?: string;
-  status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute';
+  status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute' | 'expired' | 'used' | 'invalid';
 }
 
 interface Order {
@@ -127,9 +127,13 @@ export default function OrderList() {
 
   const filteredOrders = activeTab === 'all' 
     ? orders 
-    : orders.filter(o => o.status === activeTab);
+    : orders.filter(o => {
+        if (o.status === activeTab) return true;
+        // Also show if any sub-order matches the status
+        return o.cards?.some(c => c.status === activeTab);
+      });
 
-  const getStatusInfo = (status: Order['status']) => {
+  const getStatusInfo = (status: Order['status'] | CardItem['status']) => {
     switch (status) {
       case 'consignment':
         return { label: '寄售中', color: 'text-orange-500', bg: 'bg-orange-50', icon: Clock };
@@ -141,6 +145,14 @@ export default function OrderList() {
         return { label: '已关闭', color: 'text-slate-500', bg: 'bg-slate-50', icon: XCircle };
       case 'dispute':
         return { label: '纠纷中', color: 'text-rose-500', bg: 'bg-rose-50', icon: AlertCircle };
+      case 'expired':
+        return { label: '已过期', color: 'text-slate-400', bg: 'bg-slate-100', icon: Clock };
+      case 'used':
+        return { label: '已使用', color: 'text-amber-500', bg: 'bg-amber-100', icon: XCircle };
+      case 'invalid':
+        return { label: '已失效', color: 'text-rose-400', bg: 'bg-rose-100', icon: AlertCircle };
+      default:
+        return { label: '待处理', color: 'text-slate-400', bg: 'bg-slate-50', icon: Clock };
     }
   };
 
@@ -176,11 +188,11 @@ export default function OrderList() {
               )}
             >
               {tab.label}
-              {tab.id !== 'all' && (
-                <span className="ml-1.5 opacity-50">
-                  {orders.filter(o => o.status === tab.id).length}
-                </span>
-              )}
+              <span className="ml-1.5 opacity-50">
+                {tab.id === 'all' 
+                  ? orders.length 
+                  : orders.filter(o => o.status === tab.id || o.cards?.some(c => c.status === tab.id)).length}
+              </span>
             </button>
           ))}
         </div>
@@ -217,10 +229,12 @@ export default function OrderList() {
                         <span className="text-xl font-black italic text-indigo-600">{order.brandName[0]}</span>
                       </div>
                       <div>
-                        <h3 className="font-black text-slate-800">{order.brandName}</h3>
+                        <div className="flex items-center gap-2">
+                           <h3 className="font-black text-slate-800">{order.brandName}</h3>
+                        </div>
                         <div className="flex gap-2 items-center mt-0.5">
                           <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">
-                            {order.couponType === 'card_password' ? '卡号/卡密' : '二维码'}
+                            共 {order.cards?.length || 1} 份子订单
                           </span>
                           <div className="h-1 w-1 rounded-full bg-slate-200"></div>
                           <span className={cn(
@@ -232,33 +246,85 @@ export default function OrderList() {
                         </div>
                       </div>
                     </div>
-                    <div className={cn(
-                      "flex flex-col items-center justify-center rounded-2xl px-3 py-1.5 text-[8px] font-black uppercase tracking-widest shadow-sm",
-                      statusInfo.bg, 
-                      statusInfo.color
-                    )}>
-                      <statusInfo.icon size={10} className="mb-0.5" />
-                      <span>{statusInfo.label}</span>
-                    </div>
+                    {/* Status badge removed as per user request */}
                   </div>
 
-                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-4">
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-4 border border-slate-100/50">
                     <div className="space-y-1">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">结算金额</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">总计结算 (预估)</p>
                       <p className="text-2xl font-black text-indigo-600 tracking-tighter">
                         {formatCurrency(order.expectedAmount)}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">单号/面值</p>
-                      <p className="text-[10px] font-bold text-slate-600 mt-1">¥{order.faceValue} 面值</p>
-                      <p className="text-[8px] font-medium text-slate-300 truncate w-24">ID: {order.id.slice(-8)}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">主订单 ID / 总面值</p>
+                      <p className="text-[10px] font-bold text-slate-600 mt-1">
+                        ¥{order.faceValue}
+                      </p>
+                      <p className="text-[8px] font-medium text-slate-300 truncate w-24 tracking-tighter uppercase whitespace-nowrap">ID: {order.id.slice(-8)}</p>
                     </div>
                   </div>
+
+                  {/* Sub-orders Detailed List at Bottom */}
+                  <div className="mt-5 space-y-2 border-t border-slate-100 pt-5">
+                    <div className="mb-2 flex items-center justify-between px-1">
+                       <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-300">子订单明细</span>
+                       <span className="text-[9px] font-bold text-slate-400">共 {order.cards?.length || 1} 份</span>
+                    </div>
+                    {(order.cards && order.cards.length > 0 ? order.cards : [{ id: order.id.slice(-6), cardNo: order.cardNo, cardPwd: order.cardPwd, status: order.status as any }]).slice(0, 3).map((card, idx) => {
+                      const cardStatus = getStatusInfo(card.status);
+                      const subExpectedAmount = order.cards?.length ? order.expectedAmount / order.cards.length : order.expectedAmount;
+                      
+                      return (
+                        <div key={card.id || idx} className="rounded-2xl border border-slate-50 bg-slate-50/30 p-3 transition-colors hover:bg-white group/item">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-black italic text-indigo-300">#{idx + 1}</span>
+                              <span className="text-[9px] font-bold text-slate-400 font-mono tracking-tighter">编号: {card.id || `SUB-${idx+1}`}</span>
+                            </div>
+                            <div className={cn("text-[8px] font-black uppercase px-2 py-0.5 rounded-full shadow-sm", cardStatus.bg, cardStatus.color)}>
+                              {cardStatus.label}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-end justify-between">
+                            <div className="space-y-1">
+                              {card.cardPwd && (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[8px] font-black uppercase text-slate-300">卡密:</span>
+                                  <span className="text-[10px] font-bold text-slate-600 font-mono tracking-wider">{card.cardPwd.slice(0, 4)}****{card.cardPwd.slice(-4)}</span>
+                                </div>
+                              )}
+                              {card.cardNo && (
+                                <div className="flex items-center gap-1.5 text-slate-400">
+                                  <span className="text-[8px] font-black uppercase">卡号:</span>
+                                  <span className="text-[9px] font-medium font-mono">{card.cardNo.slice(0, 4)}...{card.cardNo.slice(-4)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <span className="block text-[8px] font-black uppercase text-slate-300 leading-none mb-0.5">预计结算</span>
+                              <span className="text-sm font-black text-indigo-500">{formatCurrency(subExpectedAmount)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {order.cards && order.cards.length > 3 && (
+                      <div className="py-1 text-center">
+                        <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest animate-pulse mt-1">
+                          + 还有 {order.cards.length - 3} 份子订单待核销
+                        </p>
+                      </div>
+                    )}
+                  </div>
                   
-                  <div className="mt-4 flex items-center justify-between px-2">
+                  <div className="mt-6 flex items-center justify-between px-1">
                      <p className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.2em]">{new Date(order.createdAt).toLocaleString()}</p>
-                     <button className="text-[8px] font-black uppercase tracking-widest text-indigo-400 underline decoration-indigo-200">订单详情</button>
+                     <div className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-indigo-400">
+                       <span>全部明细</span>
+                       <div className="h-4 w-4 bg-indigo-50 shadow-sm flex items-center justify-center rounded-full leading-none group-hover:translate-x-1 transition-transform">→</div>
+                     </div>
                   </div>
                 </div>
               );

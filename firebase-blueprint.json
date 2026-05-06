@@ -62,15 +62,29 @@
         "brandName": { "type": "string" },
         "categoryId": { "type": "string" },
         "couponType": { "enum": ["card_password", "qr_code"], "type": "string" },
-        "speed": { "enum": ["fast", "slow"], "type": "string" },
+        "speed": { "enum": ["fast", "slow", "normal"], "type": "string" },
         "faceValue": { "type": "number" },
         "expectedAmount": { "type": "number" },
         "cardNo": { "type": "string" },
         "cardPwd": { "type": "string" },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "cardNo": { "type": "string" },
+              "cardPwd": { "type": "string" },
+              "status": { "enum": ["consignment", "settling", "completed", "closed", "dispute", "expired", "used", "invalid"], "type": "string" },
+              "remark": { "type": "string" }
+            }
+          }
+        },
         "expiryDate": { "type": "string", "description": "Expiry date of the card/coupon" },
         "qrCodeUrl": { "type": "string" },
         "status": { "enum": ["consignment", "settling", "completed", "closed", "dispute"], "type": "string" },
-        "rejectReason": { "type": "string" },
+        "closedReason": { "type": "string" },
+        "disputeDetails": { "type": "string" },
         "createdAt": { "format": "date-time", "type": "string" },
         "updatedAt": { "format": "date-time", "type": "string" }
       }
@@ -82,9 +96,12 @@
       "properties": {
         "userId": { "type": "string" },
         "amount": { "type": "number" },
-        "method": { "enum": ["alipay", "bank_card"], "type": "string" },
-        "targetAccount": { "type": "string" },
-        "status": { "enum": ["pending", "completed", "rejected"], "type": "string" },
+        "realName": { "type": "string" },
+        "alipayAccount": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "orderIds": { "type": "array", "items": { "type": "string" } },
+        "status": { "enum": ["pending", "processing", "completed", "rejected"], "type": "string" },
+        "rejectionReason": { "type": "string" },
         "createdAt": { "format": "date-time", "type": "string" }
       }
     },

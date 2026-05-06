@@ -8,7 +8,6 @@ import OrderDetail from './pages/h5/OrderDetail';
 import BindAlipay from './pages/h5/BindAlipay';
 import TransactionHistory from './pages/h5/TransactionHistory';
 import Profile from './pages/h5/Profile';
-import AuthPage from './pages/h5/AuthPage';
 import AdminOrders from './pages/admin/Orders';
 import AdminWithdrawals from './pages/admin/Withdrawals';
 import AdminBrands from './pages/admin/Brands';
@@ -39,13 +38,12 @@ export default function App() {
           <Route index element={<Home />} />
           <Route path="categories" element={<CategoryList />} />
           <Route path="brand/:id" element={<BrandDetail />} />
-          <Route path="orders" element={user ? <OrderList /> : <Navigate to="/auth" />} />
-          <Route path="order/:id" element={user ? <OrderDetail /> : <Navigate to="/auth" />} />
-          <Route path="bind-alipay" element={user ? <BindAlipay /> : <Navigate to="/auth" />} />
-          <Route path="transaction-history" element={user ? <TransactionHistory /> : <Navigate to="/auth" />} />
-          <Route path="profile" element={user ? <Profile /> : <Navigate to="/auth" />} />
+          <Route path="orders" element={<OrderList />} />
+          <Route path="order/:id" element={<OrderDetail />} />
+          <Route path="bind-alipay" element={<BindAlipay />} />
+          <Route path="transaction-history" element={<TransactionHistory />} />
+          <Route path="profile" element={<Profile />} />
         </Route>
-        <Route path="/auth" element={!user ? <AuthPage /> : <Navigate to="/" />} />
 
         {/* Admin Routes */}
         <Route path="/admin" element={isAdmin ? <AdminLayout /> : <Navigate to="/" />}>

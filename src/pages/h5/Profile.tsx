@@ -8,6 +8,14 @@ import { cn, formatCurrency } from '../../lib/utils';
 import { Wallet, Settings, ShieldCheck, HelpCircle, Phone, LogOut, ChevronRight, User, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+interface CardItem {
+  id: string;
+  cardNo?: string;
+  cardPwd?: string;
+  status: string;
+  withdrawn?: boolean;
+}
+
 interface Order {
   id: string;
   brandName: string;
@@ -16,6 +24,20 @@ interface Order {
   status: string;
   createdAt: string;
   withdrawn?: boolean;
+  cards?: CardItem[];
+}
+
+interface WithdrawableItem {
+  id: string; // Unique key for selection
+  mainOrderId: string;
+  cardId?: string;
+  brandName: string;
+  amount: number;
+  faceValue: number;
+  createdAt: string;
+  isSubOrder: boolean;
+  cardIndex?: number;
+  cardNo?: string;
 }
 
 export default function Profile() {
@@ -26,9 +48,10 @@ export default function Profile() {
   const [submitting, setSubmitting] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [stats, setStats] = useState({ pending: 0, completed: 0 });
-  const [completedOrders, setCompletedOrders] = useState<Order[]>([]);
-  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [withdrawableItems, setWithdrawableItems] = useState<WithdrawableItem[]>([]);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [availableBalance, setAvailableBalance] = useState(0);
+  const [allOrders, setAllOrders] = useState<Order[]>([]);
 
   useEffect(() => {
     if (!profile) return;
@@ -39,37 +62,68 @@ export default function Profile() {
       );
       const snap = await getDocs(q);
       const orders = snap.docs.map(d => ({ ...d.data(), id: d.id }) as Order);
+      setAllOrders(orders);
       
-      const refundable = orders.filter(o => o.status === 'completed' && !o.withdrawn);
+      const items: WithdrawableItem[] = [];
+      orders.forEach(order => {
+        if (order.cards && order.cards.length > 0) {
+          order.cards.forEach((card, index) => {
+            if (card.status === 'completed' && !card.withdrawn) {
+              items.push({
+                id: `${order.id}-${card.id || index}`,
+                mainOrderId: order.id,
+                cardId: card.id,
+                brandName: order.brandName,
+                amount: order.expectedAmount / order.cards!.length,
+                faceValue: order.faceValue / order.cards!.length,
+                createdAt: order.createdAt,
+                isSubOrder: true,
+                cardIndex: index + 1,
+                cardNo: card.cardNo
+              });
+            }
+          });
+        } else if (order.status === 'completed' && !order.withdrawn) {
+          // Legacy support
+          items.push({
+            id: order.id,
+            mainOrderId: order.id,
+            brandName: order.brandName,
+            amount: order.expectedAmount,
+            faceValue: order.faceValue,
+            createdAt: order.createdAt,
+            isSubOrder: false
+          });
+        }
+      });
       
-      // Calculate real-time available balance from orders
-      const orderBalance = refundable.reduce((sum, o) => sum + (o.expectedAmount || 0), 0);
+      const orderBalance = items.reduce((sum, item) => sum + item.amount, 0);
       setAvailableBalance(orderBalance);
       
       setStats({
         pending: orders.filter(o => ['consignment', 'settling', 'dispute'].includes(o.status)).length,
-        completed: refundable.length
+        completed: items.length
       });
-      setCompletedOrders(refundable);
+      setWithdrawableItems(items);
     };
     fetchStats();
   }, [profile, showWithdraw]);
 
   useEffect(() => {
-    const total = completedOrders
-      .filter(o => selectedOrderIds.includes(o.id))
-      .reduce((sum, o) => sum + o.expectedAmount, 0);
+    const total = withdrawableItems
+      .filter(item => selectedItemIds.includes(item.id))
+      .reduce((sum, item) => sum + item.amount, 0);
     setAmount(total.toFixed(2));
-  }, [selectedOrderIds, completedOrders]);
+  }, [selectedItemIds, withdrawableItems]);
 
-  const toggleOrderSelection = (id: string) => {
-    setSelectedOrderIds(prev => 
+  const toggleItemSelection = (id: string) => {
+    setSelectedItemIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
 
   const handleWithdraw = async () => {
-    if (!profile || selectedOrderIds.length === 0) return;
+    if (!profile || selectedItemIds.length === 0) return;
     const totalAmount = parseFloat(amount);
     
     setSubmitting(true);
@@ -78,11 +132,11 @@ export default function Profile() {
       const withdrawalRef = await addDoc(collection(db, 'withdrawals'), {
         userId: profile.uid,
         amount: totalAmount,
-        orderIds: selectedOrderIds,
+        selectedItems: withdrawableItems.filter(i => selectedItemIds.includes(i.id)),
         realName: profile.realName || '',
         alipayAccount: profile.alipayAccount || '',
         method: 'alipay',
-        targetAccount: profile.alipayAccount || '', // Keep for backward compatibility
+        targetAccount: profile.alipayAccount || '',
         status: 'pending',
         createdAt: new Date().toISOString(),
       });
@@ -101,18 +155,69 @@ export default function Profile() {
         createdAt: new Date().toISOString()
       });
 
-      // 3. Mark orders as withdrawn
-      selectedOrderIds.forEach(id => {
-        batch.update(doc(db, 'orders', id), { 
-          withdrawn: true,
-          withdrawalId: withdrawalRef.id 
-        });
+      // 3. Mark items as withdrawn
+      // Group selections by orderId
+      const selectionsByOrder: Record<string, string[]> = {};
+      selectedItemIds.forEach(id => {
+        const item = withdrawableItems.find(i => i.id === id);
+        if (item) {
+          if (!selectionsByOrder[item.mainOrderId]) {
+            selectionsByOrder[item.mainOrderId] = [];
+          }
+          if (item.cardId) {
+             selectionsByOrder[item.mainOrderId].push(item.cardId);
+          } else if (item.isSubOrder) {
+             // If cardId is missing, use internal logic maybe? (should have cardId)
+             // Fallback to finding by index if needed, but for now we assume cardId exists or use index
+          }
+        }
       });
+
+      // Process batches
+      const processedOrderIds = new Set<string>();
+      
+      // Update each involved order
+      for (const orderId in selectionsByOrder) {
+        const order = allOrders.find(o => o.id === orderId);
+        if (!order) continue;
+
+        if (order.cards && order.cards.length > 0) {
+          const updatedCards = order.cards.map(card => {
+            if (selectionsByOrder[orderId].includes(card.id)) {
+              return { ...card, withdrawn: true, withdrawalId: withdrawalRef.id };
+            }
+            return card;
+          });
+          
+          batch.update(doc(db, 'orders', order.id), { 
+            cards: updatedCards 
+          });
+        } else {
+          // Legacy order
+          batch.update(doc(db, 'orders', order.id), { 
+            withdrawn: true,
+            withdrawalId: withdrawalRef.id
+          });
+        }
+        processedOrderIds.add(orderId);
+      }
+
+      // Check if any legacy-only selected orders were missed
+      selectedItemIds.forEach(id => {
+        const item = withdrawableItems.find(i => i.id === id);
+        if (item && !item.isSubOrder && !processedOrderIds.has(item.mainOrderId)) {
+           batch.update(doc(db, 'orders', item.mainOrderId), { 
+             withdrawn: true,
+             withdrawalId: withdrawalRef.id
+           });
+        }
+      });
+
       await batch.commit();
 
       alert('申请已提交，请等待处理');
       setShowWithdraw(false);
-      setSelectedOrderIds([]);
+      setSelectedItemIds([]);
       setAmount('0.00');
     } catch (err) {
       console.error(err);
@@ -167,13 +272,13 @@ export default function Profile() {
               <div className="flex-1">
                 <h2 className="text-2xl font-black tracking-tight">{profile.displayName || '未定义昵称'}</h2>
                 <div className="flex flex-col gap-1 mt-1 opacity-80">
-                  {profile.phoneNumber && (
-                    <div className="flex items-center gap-1 text-[10px] font-bold">
-                      <Phone size={10} />
-                      <span>{profile.phoneNumber}</span>
-                    </div>
+                  <div className="flex items-center gap-1 text-[10px] font-bold">
+                    <Phone size={10} />
+                    <span>{profile.phoneNumber || '未绑定手机'}</span>
+                  </div>
+                  {!profile.email.includes('@phone.user') && (
+                    <p className="text-[10px] font-bold uppercase tracking-wider">{profile.email}</p>
                   )}
-                  <p className="text-[10px] font-bold uppercase tracking-wider">{profile.email}</p>
                 </div>
               </div>
             </div>
@@ -300,16 +405,16 @@ export default function Profile() {
                     </div>
 
                     <div>
-                      <label className="mb-3 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">选择结算订单</label>
+                      <label className="mb-3 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">选择已完成的子订单</label>
                       <div className="max-h-[30vh] overflow-y-auto space-y-3 pr-2 scrollbar-hide">
-                        {completedOrders.length > 0 ? (
-                          completedOrders.map((order) => (
+                        {withdrawableItems.length > 0 ? (
+                          withdrawableItems.map((item) => (
                             <div 
-                              key={order.id} 
-                              onClick={() => toggleOrderSelection(order.id)}
+                              key={item.id} 
+                              onClick={() => toggleItemSelection(item.id)}
                               className={cn(
                                 "flex items-center justify-between p-4 rounded-2xl border-2 transition-all active:scale-[0.98] cursor-pointer",
-                                selectedOrderIds.includes(order.id) 
+                                selectedItemIds.includes(item.id) 
                                   ? "bg-indigo-50 border-indigo-200" 
                                   : "bg-slate-50 border-transparent hover:border-slate-100"
                               )}
@@ -317,25 +422,37 @@ export default function Profile() {
                               <div className="flex items-center gap-3">
                                 <div className={cn(
                                   "h-5 w-5 rounded-full border-2 flex items-center justify-center transition-colors",
-                                  selectedOrderIds.includes(order.id) ? "bg-indigo-600 border-indigo-600" : "border-slate-200"
+                                  selectedItemIds.includes(item.id) ? "bg-indigo-600 border-indigo-600" : "border-slate-200"
                                 )}>
-                                  {selectedOrderIds.includes(order.id) && <div className="h-2 w-2 rounded-full bg-white" />}
+                                  {selectedItemIds.includes(item.id) && <div className="h-2 w-2 rounded-full bg-white" />}
                                 </div>
-                                <div>
-                                  <p className="text-sm font-black text-slate-700">{order.brandName}</p>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-black text-slate-700">{item.brandName}</p>
+                                    {item.isSubOrder && (
+                                      <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[8px] font-black text-indigo-600">
+                                        #{item.cardIndex}
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
-                                    {new Date(order.createdAt).toLocaleDateString()} · 面值 ¥{order.faceValue}
+                                    {new Date(item.createdAt).toLocaleDateString()} · 面值 ¥{item.faceValue.toFixed(0)}
                                   </p>
+                                  {item.cardNo && (
+                                    <p className="mt-0.5 text-[8px] font-medium text-slate-300 font-mono">
+                                      卡号: {item.cardNo.slice(0, 8)}...
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                               <div className="text-right">
-                                <p className="text-sm font-black text-indigo-600">¥{order.expectedAmount.toFixed(2)}</p>
+                                <p className="text-sm font-black text-indigo-600">¥{item.amount.toFixed(2)}</p>
                               </div>
                             </div>
                           ))
                         ) : (
                           <div className="py-10 text-center rounded-2xl bg-slate-50 border-2 border-dashed border-slate-100 text-slate-400">
-                            <p className="text-xs font-bold">暂无可提现订单</p>
+                            <p className="text-xs font-bold">暂无已完成的子订单</p>
                           </div>
                         )}
                       </div>
@@ -344,7 +461,7 @@ export default function Profile() {
                     <div className="pt-4 border-t border-slate-50">
                       <div className="flex items-center justify-between mb-2 px-1">
                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">提现金额</label>
-                        <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">已选 {selectedOrderIds.length} 笔订单</span>
+                        <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">已选 {selectedItemIds.length} 份</span>
                       </div>
                       <div className="relative">
                         <span className="absolute left-5 top-1/2 -translate-y-1/2 text-2xl font-black text-slate-800">¥</span>
@@ -368,7 +485,7 @@ export default function Profile() {
               {profile.alipayAccount && (
                 <button
                   onClick={handleWithdraw}
-                  disabled={submitting || selectedOrderIds.length === 0 || parseFloat(amount) < 10}
+                  disabled={submitting || selectedItemIds.length === 0 || parseFloat(amount) < 10}
                   className="w-full rounded-2xl bg-indigo-600 py-5 text-xs font-black uppercase tracking-[0.2em] text-white shadow-2xl shadow-indigo-100 transition-all hover:bg-indigo-700 active:scale-95 disabled:grayscale"
                 >
                   {submitting ? '提现中...' : '提交提现申请'}

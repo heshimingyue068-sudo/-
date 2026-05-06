@@ -1,31 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. Global Safety Net
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // --- Helpers ---
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+    function isAdmin() {
+      // In a real app, this should be:
+      // return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      // For this demo with virtual login, we'll allow administrative actions 
+      // if the request looks like it's coming from an authorized source 
+      // (Simplified for prototype)
+      return true; 
     }
 
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return true; // Relaxed for virtual login demo
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128;
     }
 
     function incoming() {
@@ -36,40 +31,60 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- ALL READ/WRITE ALLOWED FOR PREVIEW ---
-    // In production, these should be restricted using request.auth
-    match /{document=**} {
-      allow read, write: if true;
+    // --- Validation Helpers ---
+    function isValidUser(data) {
+      return data.uid is string && 
+             data.email is string && 
+             data.balance is number;
     }
 
-    // --- User Rules ---
+    function isValidOrder(data) {
+      return data.userId is string && 
+             data.faceValue is number && 
+             data.expectedAmount is number;
+    }
+
+    // --- Collection Rules ---
+
+    // Connection test rule
+    match /test/connection {
+      allow read: if true;
+    }
+
     match /users/{userId} {
-      allow read, write: if true;
+      allow read, write: if true; 
     }
 
-    // --- Category Rules ---
     match /categories/{categoryId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
-    // --- Brand Rules ---
     match /brands/{brandId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
-    // --- Config Rules ---
     match /configs/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if true;
     }
 
-    // --- Order Rules ---
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
     }
 
-    // --- Withdrawal Rules ---
     match /withdrawals/{withdrawalId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if true;
+      allow create: if true;
     }
   }
 }

@@ -14,7 +14,7 @@ export const auth = getAuth(app);
 async function testConnection() {
   try {
     console.log("Testing Firestore connection...");
-    const testDoc = doc(db, '_internal_', 'monitoring');
+    const testDoc = doc(db, 'test', 'connection');
     await getDocFromServer(testDoc);
     console.log("Firestore connection successful");
   } catch (error) {
