@@ -119,6 +119,20 @@
         "createdAt": { "format": "date-time", "type": "string" }
       },
       "required": ["userId", "amount", "type", "description", "createdAt"]
+    },
+    "BaseProduct": {
+      "title": "Base Product",
+      "description": "Standardized product item in the base library",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "brandId": { "type": "string" },
+        "category": { "type": "string" },
+        "createdAt": { "format": "date-time", "type": "string" },
+        "updatedAt": { "format": "date-time", "type": "string" }
+      },
+      "required": ["name", "brandId"]
     }
   },
   "firestore": {
@@ -149,6 +163,10 @@
     "transactions/{transactionId}": {
       "description": "User balance transactions (income/expenditure)",
       "schema": "Transaction"
+    },
+    "base_products/{productId}": {
+      "description": "Base product library",
+      "schema": "BaseProduct"
     }
   }
 }

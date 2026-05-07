@@ -9,8 +9,10 @@ interface Product {
   id: string;
   brandId: string;
   faceValue: number;
-  fastRate: number; // Express Settlement Discount (e.g. 0.94)
-  slowRate: number; // Normal Settlement Discount (e.g. 0.96)
+  fastPrice?: number;
+  slowPrice?: number;
+  fastRate: number;
+  slowRate: number;
   isActive: boolean;
   createdAt: string;
 }
@@ -30,6 +32,8 @@ export default function AdminProducts() {
     id: '',
     brandId: '',
     faceValue: 100,
+    fastPrice: 94,
+    slowPrice: 96,
     fastRate: 0.94,
     slowRate: 0.96,
     isActive: true,
@@ -63,13 +67,22 @@ export default function AdminProducts() {
     // Auto-generate ID if name is not set (e.g. brandId-value)
     const productId = formData.id || `${formData.brandId}_${formData.faceValue}`;
     
+    // Calculate rates for reference
+    const fastPrice = Number(formData.fastPrice || 0);
+    const slowPrice = Number(formData.slowPrice || 0);
+    const faceValue = Number(formData.faceValue);
+    const fastRate = faceValue > 0 ? fastPrice / faceValue : 0;
+    const slowRate = faceValue > 0 ? slowPrice / faceValue : 0;
+
     try {
       await setDoc(doc(db, 'configs', productId), {
         ...formData,
         id: productId,
-        faceValue: Number(formData.faceValue),
-        fastRate: Number(formData.fastRate),
-        slowRate: Number(formData.slowRate),
+        faceValue,
+        fastPrice,
+        slowPrice,
+        fastRate,
+        slowRate,
         createdAt: formData.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -108,6 +121,8 @@ export default function AdminProducts() {
         id: '',
         brandId: brands[0]?.id || '',
         faceValue: 100,
+        fastPrice: 94,
+        slowPrice: 96,
         fastRate: 0.94,
         slowRate: 0.96,
         isActive: true,
@@ -167,14 +182,14 @@ export default function AdminProducts() {
                     </td>
                     <td className="px-8 py-8">
                       <div className="flex flex-col">
-                        <span className="text-lg font-black text-indigo-600 tracking-tighter">{(cfg.fastRate * 100).toFixed(1)}%</span>
-                        <span className="text-[10px] font-bold text-slate-400">到手: ¥{(cfg.faceValue * cfg.fastRate).toFixed(2)}</span>
+                        <span className="text-lg font-black text-indigo-600 tracking-tighter">¥{cfg.fastPrice || (cfg.faceValue * cfg.fastRate).toFixed(2)}</span>
+                        <span className="text-[10px] font-bold text-slate-400">费率: {((cfg.fastPrice / cfg.faceValue || cfg.fastRate) * 100).toFixed(1)}%</span>
                       </div>
                     </td>
                     <td className="px-8 py-8">
                       <div className="flex flex-col">
-                        <span className="text-lg font-black text-emerald-600 tracking-tighter">{(cfg.slowRate * 100).toFixed(1)}%</span>
-                        <span className="text-[10px] font-bold text-slate-400">到手: ¥{(cfg.faceValue * cfg.slowRate).toFixed(2)}</span>
+                        <span className="text-lg font-black text-emerald-600 tracking-tighter">¥{cfg.slowPrice || (cfg.faceValue * cfg.slowRate).toFixed(2)}</span>
+                        <span className="text-[10px] font-bold text-slate-400">费率: {((cfg.slowPrice / cfg.faceValue || cfg.slowRate) * 100).toFixed(1)}%</span>
                       </div>
                     </td>
                     <td className="px-8 py-8">
@@ -273,6 +288,21 @@ export default function AdminProducts() {
                     </select>
                   </div>
                   <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">关联基础商品 (仅显示)</label>
+                    <select
+                      className="w-full rounded-2xl bg-slate-50 px-6 py-4 text-sm font-bold text-slate-900 outline-none border border-slate-100 focus:border-indigo-600 appearance-none"
+                      defaultValue=""
+                    >
+                      <option value="">未选择基准商品</option>
+                      <option value="1">Starbucks Drink Voucher 100</option>
+                      <option value="2">KFC Family Meal Card</option>
+                      <option value="3">McDonald's Universal Coupon</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-8">
+                  <div>
                     <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">商品面值 (¥)</label>
                     <input
                       type="number"
@@ -288,31 +318,35 @@ export default function AdminProducts() {
                 <div className="grid grid-cols-2 gap-8">
                   <div>
                     <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-indigo-600 px-1 flex items-center gap-1">
-                      <Percent size={12} /> 极速结算折扣
+                      <Percent size={12} /> 极速结算回款价 (¥)
                     </label>
                     <input
                       type="number"
-                      step="0.001"
+                      step="0.01"
                       required
                       className="w-full rounded-2xl bg-slate-50 px-6 py-4 text-sm font-bold text-slate-900 outline-none border border-slate-100 focus:border-indigo-600"
-                      value={formData.fastRate}
-                      onChange={(e) => setFormData({ ...formData, fastRate: Number(e.target.value) })}
+                      value={formData.fastPrice}
+                      onChange={(e) => setFormData({ ...formData, fastPrice: Number(e.target.value) })}
                     />
-                    <p className="mt-2 text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1">输入折扣系数, 如 0.94</p>
+                    <p className="mt-2 text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1">
+                      预估费率: {((Number(formData.fastPrice || 0) / Number(formData.faceValue || 1)) * 100).toFixed(1)}%
+                    </p>
                   </div>
                   <div>
                     <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-emerald-600 px-1 flex items-center gap-1">
-                      <Percent size={12} /> 普通结算折扣
+                      <Percent size={12} /> 普通结算回款价 (¥)
                     </label>
                     <input
                       type="number"
-                      step="0.001"
+                      step="0.01"
                       required
                       className="w-full rounded-2xl bg-slate-50 px-6 py-4 text-sm font-bold text-slate-900 outline-none border border-slate-100 focus:border-emerald-600"
-                      value={formData.slowRate}
-                      onChange={(e) => setFormData({ ...formData, slowRate: Number(e.target.value) })}
+                      value={formData.slowPrice}
+                      onChange={(e) => setFormData({ ...formData, slowPrice: Number(e.target.value) })}
                     />
-                     <p className="mt-2 text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1">通常高于极速折扣, 如 0.96</p>
+                     <p className="mt-2 text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1">
+                      预估费率: {((Number(formData.slowPrice || 0) / Number(formData.faceValue || 1)) * 100).toFixed(1)}%
+                     </p>
                   </div>
                 </div>
 

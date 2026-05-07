@@ -234,14 +234,14 @@ export default function AdminBrands() {
                     </select>
                   </div>
                   <div>
-                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">结算周期 (用户端展示)</label>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">结算周期 (手动输入时长, 如: 10分钟/2小时)</label>
                     <input
                       type="text"
                       required
-                      className="w-full rounded-2xl bg-slate-50 px-6 py-4 text-sm font-bold text-slate-900 outline-none border border-slate-100 focus:border-indigo-600"
+                      className="w-full rounded-2xl bg-slate-50 px-6 py-4 text-sm font-bold text-slate-900 outline-none border border-slate-100 focus:border-indigo-600 shadow-sm"
                       value={formData.settlementCycle}
                       onChange={(e) => setFormData({ ...formData, settlementCycle: e.target.value })}
-                      placeholder="T+0 / T+1 / 极速"
+                      placeholder="例如: 2小时 / 24小时 / 极速"
                     />
                   </div>
                 </div>
