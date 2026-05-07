@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../lib/firebase';
 import { collection, getDocs, query, orderBy, doc, runTransaction, where, getDoc, serverTimestamp } from 'firebase/firestore';
-import { Landmark, Check, X, Search, User, CreditCard, Eye, ExternalLink } from 'lucide-react';
+import { Landmark, Check, X, Search, User, CreditCard, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface CardApprovalItem {
@@ -111,63 +111,97 @@ export default function AdminOrderApprovals() {
     if (!confirm('确定审核通过并结算资金到该用户账户吗？')) return;
 
     try {
-      await runTransaction(db, async (transaction) => {
-        const orderRef = doc(db, 'orders', item.orderId);
-        const userRef = doc(db, 'users', item.userId);
-        
-        const orderSnap = await transaction.get(orderRef);
-        const userSnap = await transaction.get(userRef);
-        
-        if (!orderSnap.exists()) throw new Error("订单不存在");
-        if (!userSnap.exists()) throw new Error("用户不存在");
-
-        const orderData = orderSnap.data();
-        const cards = [...(orderData.cards || [])];
-        
-        if (cards[item.cardIndex]) {
-          cards[item.cardIndex] = {
-            ...cards[item.cardIndex],
-            status: 'completed',
-            settlementStatus: 'settled',
-            settledAt: serverTimestamp()
-          };
-        }
-
-        const stillHasPending = cards.some(c => 
-          (c.status === 'settling') || 
-          (c.status === 'completed' && c.settlementStatus === 'pending')
-        );
-
-        const currentBalance = userSnap.data().balance || 0;
-        transaction.update(userRef, {
-          balance: currentBalance + item.amount
-        });
-
-        transaction.update(orderRef, {
-          cards,
-          status: stillHasPending ? orderData.status : 'completed',
-          pendingSettlement: stillHasPending
-        });
-
-        const transRef = doc(collection(db, 'transactions'));
-        transaction.set(transRef, {
-          userId: item.userId,
-          amount: item.amount,
-          type: 'income',
-          description: `子订单结算: ${item.brandName}-${item.cardIndex + 1}`,
-          sourceId: item.orderId,
-          cardIndex: item.cardIndex,
-          status: 'completed',
-          createdAt: new Date().toISOString()
-        });
-      });
-
+      await approveItemTransaction(item);
       alert('审批通过，资金已实时入账');
       fetchOrdersPendingApproval();
     } catch (err) {
       console.error(err);
       alert('审核失败');
     }
+  };
+
+  const approveItemTransaction = async (item: CardApprovalItem) => {
+    await runTransaction(db, async (transaction) => {
+      const orderRef = doc(db, 'orders', item.orderId);
+      const userRef = doc(db, 'users', item.userId);
+      
+      const orderSnap = await transaction.get(orderRef);
+      const userSnap = await transaction.get(userRef);
+      
+      if (!orderSnap.exists()) throw new Error("订单不存在");
+      if (!userSnap.exists()) throw new Error("用户不存在");
+
+      const orderData = orderSnap.data();
+      const cards = [...(orderData.cards || [])];
+      
+      // Ensure the card exists and is pending
+      const card = cards[item.cardIndex];
+      if (!card || card.settlementStatus !== 'pending') return;
+
+      cards[item.cardIndex] = {
+        ...card,
+        status: 'completed',
+        settlementStatus: 'settled',
+        settledAt: serverTimestamp()
+      };
+
+      const stillHasPending = cards.some(c => 
+        (c.status === 'settling') || 
+        (c.status === 'completed' && c.settlementStatus === 'pending')
+      );
+
+      const currentBalance = userSnap.data().balance || 0;
+      transaction.update(userRef, {
+        balance: currentBalance + item.amount
+      });
+
+      transaction.update(orderRef, {
+        cards,
+        status: stillHasPending ? orderData.status : 'completed',
+        pendingSettlement: stillHasPending
+      });
+
+      const transRef = doc(collection(db, 'transactions'));
+      transaction.set(transRef, {
+        userId: item.userId,
+        amount: item.amount,
+        type: 'income',
+        description: `子订单结算: ${item.brandName}-${item.cardIndex + 1}`,
+        sourceId: item.orderId,
+        cardIndex: item.cardIndex,
+        status: 'completed',
+        createdAt: new Date().toISOString()
+      });
+    });
+  };
+
+  const handleApproveAll = async () => {
+    const pendingItems = filtered.filter(i => i.status === 'pending');
+    if (pendingItems.length === 0) {
+      alert('当前列表中没有待审批的项目');
+      return;
+    }
+
+    if (!confirm(`确定要【一键通过】当前列表中的 ${pendingItems.length} 条待审批项目吗？资金将实时结算到对应的用户账户。`)) return;
+
+    setLoading(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    // Process sequentially to avoid too many concurrent transactions on same users/orders if any
+    for (const item of pendingItems) {
+      try {
+        await approveItemTransaction(item);
+        successCount++;
+      } catch (err) {
+        console.error(`Error approving item ${item.id}:`, err);
+        failCount++;
+      }
+    }
+
+    setLoading(false);
+    alert(`批量审批完成：成功 ${successCount} 条` + (failCount > 0 ? `，失败 ${failCount} 条` : ''));
+    fetchOrdersPendingApproval();
   };
 
   const handleReject = async (item: CardApprovalItem, reason: string) => {
@@ -266,6 +300,13 @@ export default function AdminOrderApprovals() {
         </div>
         
         <div className="flex gap-2">
+          <button
+            onClick={handleApproveAll}
+            className="rounded-xl px-6 py-2.5 text-[10px] font-black uppercase tracking-widest bg-indigo-600 text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all mr-2"
+          >
+            一键通过所有待办
+          </button>
+
           <button
             onClick={handleGenerateDemo}
             className="rounded-xl px-6 py-2.5 text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all mr-4 shadow-sm"
@@ -423,14 +464,6 @@ export default function AdminOrderApprovals() {
                         title="驳回"
                       >
                         <X size={18} />
-                      </button>
-
-                      <button
-                        onClick={() => navigate(`/admin/orders/${item.orderId}`)}
-                        className="h-9 w-9 rounded-xl bg-slate-50 text-slate-400 border border-slate-100 flex items-center justify-center hover:bg-slate-900 hover:text-white transition-all shadow-sm"
-                        title="查看原单"
-                      >
-                        <Eye size={18} />
                       </button>
                     </div>
                  </div>
