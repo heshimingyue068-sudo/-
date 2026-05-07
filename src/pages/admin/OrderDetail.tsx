@@ -23,7 +23,17 @@ interface CardItem {
   cardNo?: string;
   cardPwd?: string;
   status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute' | 'expired' | 'used' | 'invalid';
+  settlementStatus?: 'pending' | 'settled' | 'rejected';
   remark?: string;
+  phone?: string;
+  location?: string;
+  skuName?: string;
+  productName?: string;
+  claimTime?: string;
+  usageTime?: string;
+  usageStore?: string;
+  isInvalidated?: boolean;
+  invalidatedTime?: string;
 }
 
 interface UserProfile {
@@ -40,6 +50,7 @@ interface Order {
   faceValue: number;
   expectedAmount: number;
   status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute';
+  pendingSettlement?: boolean;
   createdAt: string;
   speed: string;
   cards?: CardItem[];
@@ -107,14 +118,20 @@ export default function AdminOrderDetail() {
           if (status === 'dispute') updateData.disputeDetails = reason;
         }
 
-        transaction.update(orderRef, updateData);
-
         if (status === 'completed' && order.status !== 'completed') {
-          const currentBalance = userDoc.data().balance || 0;
-          transaction.update(userRef, { 
-            balance: currentBalance + order.expectedAmount 
+          // If marking whole order as completed, mark all non-completed cards as settling and pending settlement
+          const cards = order.cards || [];
+          const updatedCards = cards.map(card => {
+             if (card.status !== 'completed' && card.status !== 'settling') {
+               return { ...card, status: 'settling' as const, settlementStatus: 'pending' as const };
+             }
+             return card;
           });
+          updateData.cards = updatedCards;
+          updateData.pendingSettlement = true;
         }
+
+        transaction.update(orderRef, updateData);
       });
       
       setOrder(prev => prev ? { 
@@ -147,28 +164,37 @@ export default function AdminOrderDetail() {
       return;
     }
 
+    const isBecomingSettling = newStatus === 'settling' && cardToUpdate.status !== 'settling';
     const isBecomingCompleted = newStatus === 'completed' && cardToUpdate.status !== 'completed';
-    const cardValue = order.expectedAmount / (order.cards.length || 1);
 
     setUpdating(true);
     try {
       await runTransaction(db, async (transaction) => {
         const orderRef = doc(db, 'orders', order.id);
-        const userRef = doc(db, 'users', order.userId);
         
-        const userSnap = await transaction.get(userRef);
-        if (!userSnap.exists()) throw new Error("用户不存在");
+        const orderSnap = await transaction.get(orderRef);
+        if (!orderSnap.exists()) throw new Error("订单不存在");
 
         const updatedCards = order.cards!.map((card, idx) => {
           if (idx === cardIndex) {
-            return {
+            const upCard = {
               ...card,
               status: newStatus,
               remark: remark ?? card.remark ?? ""
             };
+            if (isBecomingSettling || isBecomingCompleted) {
+              upCard.settlementStatus = 'pending';
+            }
+            return upCard;
           }
           return card;
         });
+
+        // Check if any card is pending settlement (settling status or completed but pending)
+        const hasPending = updatedCards.some(c => 
+          (c.status === 'settling') || 
+          (c.status === 'completed' && c.settlementStatus === 'pending')
+        );
 
         // Sanitize
         const sanitizedCards = updatedCards.map(card => {
@@ -179,15 +205,9 @@ export default function AdminOrderDetail() {
 
         transaction.update(orderRef, {
           cards: sanitizedCards,
+          pendingSettlement: hasPending,
           updatedAt: serverTimestamp()
         });
-
-        if (isBecomingCompleted) {
-          const currentBalance = userSnap.data().balance || 0;
-          transaction.update(userRef, {
-            balance: currentBalance + cardValue
-          });
-        }
       });
 
       // Update local state
@@ -385,16 +405,21 @@ export default function AdminOrderDetail() {
           <div className="space-y-4">
             {order.couponType === 'card_password' ? (
               order.cards && order.cards.length > 0 ? (
-                <div className="overflow-hidden rounded-3xl border border-slate-100 bg-slate-50/30">
-                  <table className="w-full text-left">
+                <div className="overflow-x-auto rounded-3xl border border-slate-100 bg-slate-50/30">
+                  <table className="w-full text-left min-w-[1200px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">#</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">卡号/卡密</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">核销备注</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">预计结算</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">状态</th>
-                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">精细控制</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">#</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">商品 / SKU</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">手机号 / 归属地</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">券码卡密</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">领取 / 使用时间</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">使用门店</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">结算预估</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">状态 / 作废</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">结算状态</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 whitespace-nowrap">核销备注</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right whitespace-nowrap">精细控制</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -425,6 +450,21 @@ export default function AdminOrderDetail() {
                             <td className="px-6 py-4">
                               <span className="text-[10px] font-black text-slate-300 italic">{(idx + 1).toString().padStart(2, '0')}</span>
                             </td>
+                            {/* Product / SKU */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-0.5">
+                                <div className="text-[11px] font-bold text-slate-800 line-clamp-1">{card.productName || order.brandName}</div>
+                                <div className="text-[9px] font-medium text-slate-400 uppercase">{card.skuName || '默认SKU'}</div>
+                              </div>
+                            </td>
+                            {/* Phone / Location */}
+                            <td className="px-6 py-4">
+                              <div className="space-y-0.5 whitespace-nowrap">
+                                <div className="text-[11px] font-bold text-slate-600 font-mono">{card.phone || '-'}</div>
+                                <div className="text-[9px] font-medium text-slate-400">{card.location || '-'}</div>
+                              </div>
+                            </td>
+                            {/* Voucher */}
                             <td className="px-6 py-4">
                               <div className="space-y-1">
                                 {card.cardNo && (
@@ -447,28 +487,68 @@ export default function AdminOrderDetail() {
                                 )}
                               </div>
                             </td>
+                            {/* Claim / Usage Time */}
+                            <td className="px-6 py-4">
+                               <div className="space-y-0.5 whitespace-nowrap">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[8px] font-black text-slate-300 uppercase">领:</span>
+                                    <span className="text-[10px] font-medium text-slate-500 font-mono">{card.claimTime || '-'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[8px] font-black text-indigo-300 uppercase">用:</span>
+                                    <span className="text-[10px] font-medium text-slate-500 font-mono">{card.usageTime || '-'}</span>
+                                  </div>
+                               </div>
+                            </td>
+                            {/* Store */}
+                            <td className="px-6 py-4">
+                               <div className="text-[10px] font-medium text-slate-500 truncate max-w-[120px]">{card.usageStore || '-'}</div>
+                            </td>
+                            {/* Settlement */}
+                            <td className="px-6 py-4">
+                               <div className="flex flex-col">
+                                  <span className="text-xs font-black text-emerald-600 tracking-tighter">¥{(order.expectedAmount / (order.cards?.length || 1)).toFixed(2)}</span>
+                               </div>
+                            </td>
+                            {/* Status / Invalidated */}
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-1.5">
+                                <span className={cn(
+                                  "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest text-center",
+                                  statusColors[card.status] || "bg-slate-50 text-slate-400"
+                                )}>
+                                  {statusLabels[card.status] || card.status}
+                                </span>
+                                {card.isInvalidated && (
+                                  <div className="text-[8px] font-black text-rose-500 uppercase tracking-tighter border border-rose-100 bg-rose-50 px-1.5 py-0.5 rounded text-center">
+                                    已作废 {card.invalidatedTime && `@ ${card.invalidatedTime}`}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            {/* Settlement Status */}
+                            <td className="px-6 py-4">
+                               {card.status === 'completed' ? (
+                                 <div className={cn(
+                                   "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest text-center",
+                                   card.settlementStatus === 'settled' ? "bg-emerald-100 text-emerald-700" :
+                                   card.settlementStatus === 'rejected' ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                                 )}>
+                                   {card.settlementStatus === 'settled' ? '已结算' : 
+                                    card.settlementStatus === 'rejected' ? '结算驳回' : '待审批'}
+                                 </div>
+                               ) : (
+                                 <span className="text-[10px] font-black text-slate-300">--</span>
+                               )}
+                            </td>
                             <td className="px-6 py-4">
                               <input 
                                 type="text"
                                 placeholder="添加核销备注..."
-                                className="w-full bg-slate-100/50 px-3 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 placeholder:text-slate-300 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all border border-transparent"
+                                className="w-full min-w-[120px] bg-slate-100/50 px-3 py-1.5 rounded-lg text-[10px] font-bold text-slate-600 placeholder:text-slate-300 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all border border-transparent"
                                 value={card.remark || ''}
                                 onChange={(e) => updateCardStatus(idx, card.status, e.target.value)}
                               />
-                            </td>
-                            <td className="px-6 py-4">
-                               <div className="flex flex-col">
-                                  <span className="text-xs font-black text-emerald-600 tracking-tighter">¥{(order.expectedAmount / (order.cards?.length || 1)).toFixed(2)}</span>
-                                  <span className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">EST. SETTLEMENT</span>
-                               </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={cn(
-                                "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest",
-                                statusColors[card.status] || "bg-slate-50 text-slate-400"
-                              )}>
-                                {statusLabels[card.status] || card.status}
-                              </span>
                             </td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex justify-end gap-1 flex-wrap max-w-[200px]">
@@ -565,8 +645,8 @@ export default function AdminOrderDetail() {
                 <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-tight">必须确认卡券已成功消耗且无法退回后，再进行对应项或整单的状态变更。</p>
               </div>
               <div className="p-6 bg-white rounded-3xl border border-slate-100">
-                <p className="text-[10px] font-black text-rose-500 uppercase mb-2">不可逆操作说明</p>
-                <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-tight">标记“核销成功”将立即触发系统自动向用户余额充值，此动作目前不支持在后台撤回。</p>
+                <p className="text-[10px] font-black text-rose-500 uppercase mb-2">手动结算说明</p>
+                <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-tight">标记“核销成功”将把子单送入“订单审批”队列，只有在审批通过后，资金才会正式入账到用户余额。</p>
               </div>
             </div>
           </div>

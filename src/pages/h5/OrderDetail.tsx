@@ -21,6 +21,7 @@ interface CardItem {
   cardNo?: string;
   cardPwd?: string;
   status: 'consignment' | 'settling' | 'completed' | 'closed' | 'dispute' | 'expired' | 'used' | 'invalid';
+  settlementStatus?: 'pending' | 'settled' | 'rejected';
 }
 
 interface Order {
@@ -229,6 +230,20 @@ export default function OrderDetail() {
                              <span>{cardStatus.label}</span>
                           </div>
                        </div>
+
+                       {cardStatus.label === '已完成' && (
+                         <div className="mb-4 flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-slate-50">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">结算环节</span>
+                           <div className={cn(
+                             "flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest",
+                             card.settlementStatus === 'settled' ? "bg-emerald-50 text-emerald-600" :
+                             card.settlementStatus === 'rejected' ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-600"
+                           )}>
+                             {card.settlementStatus === 'settled' ? '资金已入账' : 
+                              card.settlementStatus === 'rejected' ? '结算被驳回' : '等待财务审批'}
+                           </div>
+                         </div>
+                       )}
 
                        <div className="grid gap-3">
                           {card.cardNo && (

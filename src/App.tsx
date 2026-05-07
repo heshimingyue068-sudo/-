@@ -9,7 +9,7 @@ import BindAlipay from './pages/h5/BindAlipay';
 import TransactionHistory from './pages/h5/TransactionHistory';
 import Profile from './pages/h5/Profile';
 import AdminOrders from './pages/admin/Orders';
-import AdminWithdrawals from './pages/admin/Withdrawals';
+import AdminOrderApprovals from './pages/admin/OrderApprovals';
 import AdminBrands from './pages/admin/Brands';
 import AdminCategories from './pages/admin/Categories';
 import AdminProducts from './pages/admin/Products';
@@ -50,7 +50,7 @@ export default function App() {
           <Route index element={<Navigate to="/admin/orders" replace />} />
           <Route path="orders" element={<AdminOrders />} />
           <Route path="orders/:id" element={<AdminOrderDetail />} />
-          <Route path="withdrawals" element={<AdminWithdrawals />} />
+          <Route path="withdrawals" element={<AdminOrderApprovals />} />
           <Route path="withdrawals/:id" element={<AdminWithdrawalDetail />} />
           <Route path="brands" element={<AdminBrands />} />
           <Route path="categories" element={<AdminCategories />} />

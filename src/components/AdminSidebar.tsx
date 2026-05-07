@@ -10,7 +10,7 @@ export default function AdminSidebar() {
   const menuItems = [
     { label: '返回用户端', icon: LogOut, path: '/' },
     { label: '订单管理', icon: ShoppingCart, path: '/admin/orders' },
-    { label: '提现审批', icon: Landmark, path: '/admin/withdrawals' },
+    { label: '订单审批', icon: Landmark, path: '/admin/withdrawals' },
     { label: '类目管理', icon: Layers, path: '/admin/categories' },
     { label: '品牌管理', icon: Tag, path: '/admin/brands' },
     { label: '商品管理', icon: Settings, path: '/admin/products' },

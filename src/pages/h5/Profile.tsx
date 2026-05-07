@@ -38,6 +38,7 @@ interface WithdrawableItem {
   isSubOrder: boolean;
   cardIndex?: number;
   cardNo?: string;
+  settlementStatus?: string;
 }
 
 export default function Profile() {
@@ -79,26 +80,15 @@ export default function Profile() {
                 createdAt: order.createdAt,
                 isSubOrder: true,
                 cardIndex: index + 1,
-                cardNo: card.cardNo
+                cardNo: card.cardNo,
+                settlementStatus: (card as any).settlementStatus
               });
             }
-          });
-        } else if (order.status === 'completed' && !order.withdrawn) {
-          // Legacy support
-          items.push({
-            id: order.id,
-            mainOrderId: order.id,
-            brandName: order.brandName,
-            amount: order.expectedAmount,
-            faceValue: order.faceValue,
-            createdAt: order.createdAt,
-            isSubOrder: false
           });
         }
       });
       
-      const orderBalance = items.reduce((sum, item) => sum + item.amount, 0);
-      setAvailableBalance(orderBalance);
+      setAvailableBalance(profile.balance || 0);
       
       setStats({
         pending: orders.filter(o => ['consignment', 'settling', 'dispute'].includes(o.status)).length,
@@ -432,6 +422,11 @@ export default function Profile() {
                                     {item.isSubOrder && (
                                       <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[8px] font-black text-indigo-600">
                                         #{item.cardIndex}
+                                      </span>
+                                    )}
+                                    {(item as any).settlementStatus === 'pending' && (
+                                      <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-black text-amber-600">
+                                        待结算
                                       </span>
                                     )}
                                   </div>
